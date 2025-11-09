@@ -1,0 +1,10 @@
+{
+  "files.associations": {
+    "__locale": "cpp"
+  },
+  "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python",
+  "code-runner.executorMap": {
+    "python": "cd $dir && PATH=/Users/regansong/Documents/github/pytorch-cpp-ext/venv/bin:$PATH /Users/regansong/Documents/github/pytorch-cpp-ext/venv/bin/python -u $fileName"
+  },
+  "python.terminal.activateEnvironment": true
+}
