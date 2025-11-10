@@ -23,9 +23,19 @@ class _SmoothReLU(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        (x, ) = ctx.saved_tensors
+        (x,) = ctx.saved_tensors
         grad_x = ext.smooth_relu_backward(x, grad_output, ctx.alpha)
-        return grad_x, None
+        return grad_x, None, None
     
-def smooth_relu(x, alpha: float = 1.0):
-    return _SmoothReLU.apply(x, alpha)
+def smooth_relu(x, alpha: float = 1.0, *, use_vectorized: bool = False):
+    """
+    SmoothReLU autograd entry point.
+
+    Args:
+        x: Input tensor.
+        alpha: Smoothness parameter.
+        use_vectorized: Opt-in flag that will route execution through the
+            not-yet-implemented vectorized kernels. Currently raises at runtime
+            until the kernels are filled in.
+    """
+    return _SmoothReLU.apply(x, float(alpha))
