@@ -17,25 +17,24 @@ ext = load(
 class _SmoothReLU(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, alpha: float = 1.0):
-        ctx.save_for_backward(x)
+        x_contig = x.contiguous()
+        ctx.save_for_backward(x_contig)
         ctx.alpha = float(alpha)
-        return ext.smooth_relu_forward(x, ctx.alpha)
+        return ext.smooth_relu_forward(x_contig, ctx.alpha)
 
     @staticmethod
     def backward(ctx, grad_output):
         (x,) = ctx.saved_tensors
-        grad_x = ext.smooth_relu_backward(x, grad_output, ctx.alpha)
+        grad_output_contig = grad_output.contiguous()
+        grad_x = ext.smooth_relu_backward(x, grad_output_contig, ctx.alpha)
         return grad_x, None, None
     
-def smooth_relu(x, alpha: float = 1.0, *, use_vectorized: bool = False):
+def smooth_relu(x, alpha: float = 1.0):
     """
     SmoothReLU autograd entry point.
 
     Args:
         x: Input tensor.
         alpha: Smoothness parameter.
-        use_vectorized: Opt-in flag that will route execution through the
-            not-yet-implemented vectorized kernels. Currently raises at runtime
-            until the kernels are filled in.
     """
     return _SmoothReLU.apply(x, float(alpha))

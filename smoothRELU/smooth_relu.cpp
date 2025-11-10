@@ -11,6 +11,7 @@ inline void check_inputs(const Tensor& x, float alpha) {
     TORCH_CHECK(x.is_floating_point(), "x must be a floating point tensor");
     TORCH_CHECK(alpha > 0.0f, "alpha must be positive");
     TORCH_CHECK(!x.is_cuda(), "smooth_relu extension only implements CPU kernels");
+    TORCH_CHECK(x.is_contiguous(), "smooth_relu expects contiguous input tensors");
 }
 
 inline void check_grad_output(const Tensor& grad_output, const Tensor& input) {
@@ -19,17 +20,17 @@ inline void check_grad_output(const Tensor& grad_output, const Tensor& input) {
                 "grad_output must have the same shape as the input");
     TORCH_CHECK(grad_output.device() == input.device(),
                 "grad_output must be on the same device as the input");
+    TORCH_CHECK(grad_output.is_contiguous(), "smooth_relu expects contiguous grad_output tensors");
 }
 
 template <typename scalar_t>
 Tensor smooth_relu_forward_vec_impl(const Tensor& x, double alpha) {
     using Vec = at::vec::Vectorized<scalar_t>;
-    auto x_contig = x.contiguous();
-    auto out = torch::empty_like(x_contig);
+    auto out = torch::empty_like(x);
 
-    const scalar_t* src = x_contig.data_ptr<scalar_t>();
+    const scalar_t* src = x.data_ptr<scalar_t>();
     scalar_t* dst = out.data_ptr<scalar_t>();
-    const int64_t n = x_contig.numel();
+    const int64_t n = x.numel();
     constexpr int64_t kWidth = Vec::size();
 
     const scalar_t zero_val = scalar_t(0);
@@ -87,15 +88,13 @@ Tensor smooth_relu_forward_vec_impl(const Tensor& x, double alpha) {
 template <typename scalar_t>
 Tensor smooth_relu_backward_vec_impl(const Tensor& x, const Tensor& grad_output, double alpha) {
     using Vec = at::vec::Vectorized<scalar_t>;
-    auto x_contig = x.contiguous();
-    auto grad_out_contig = grad_output.contiguous();
-    auto grad_input = torch::empty_like(x_contig);
+    auto grad_input = torch::empty_like(x);
 
-    const scalar_t* x_ptr = x_contig.data_ptr<scalar_t>();
-    const scalar_t* grad_ptr = grad_out_contig.data_ptr<scalar_t>();
+    const scalar_t* x_ptr = x.data_ptr<scalar_t>();
+    const scalar_t* grad_ptr = grad_output.data_ptr<scalar_t>();
     scalar_t* grad_in_ptr = grad_input.data_ptr<scalar_t>();
 
-    const int64_t n = x_contig.numel();
+    const int64_t n = x.numel();
     constexpr int64_t kWidth = Vec::size();
 
     const scalar_t zero_val = scalar_t(0);
