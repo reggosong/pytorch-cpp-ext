@@ -1,4 +1,5 @@
 #include <torch/extension.h>
+#include <torch/library.h>
 #include <ATen/Dispatch.h>
 #include <ATen/OpMathType.h>
 #include <ATen/cpu/vec/vec.h>
@@ -7,7 +8,7 @@ using torch::Tensor;
 
 namespace {
 
-inline void check_inputs(const Tensor& x, float alpha) {
+inline void check_inputs(const Tensor& x, double alpha) {
     TORCH_CHECK(x.is_floating_point(), "x must be a floating point tensor");
     TORCH_CHECK(alpha > 0.0f, "alpha must be positive");
     TORCH_CHECK(!x.is_cuda(), "smooth_relu extension only implements CPU kernels");
@@ -145,7 +146,7 @@ Tensor smooth_relu_backward_vec_impl(const Tensor& x, const Tensor& grad_output,
 
 }  // namespace
 
-Tensor smooth_relu_forward(const Tensor& x, float alpha) {
+Tensor smooth_relu_forward(const Tensor& x, double alpha) {
     check_inputs(x, alpha);
     Tensor result;
     AT_DISPATCH_FLOATING_TYPES_AND2(
@@ -159,7 +160,7 @@ Tensor smooth_relu_forward(const Tensor& x, float alpha) {
     return result;
 }
 
-Tensor smooth_relu_backward(const Tensor& x, const Tensor& grad_output, float alpha) {
+Tensor smooth_relu_backward(const Tensor& x, const Tensor& grad_output, double alpha) {
     check_inputs(x, alpha);
     check_grad_output(grad_output, x);
     Tensor grad;
@@ -172,6 +173,16 @@ Tensor smooth_relu_backward(const Tensor& x, const Tensor& grad_output, float al
             grad = smooth_relu_backward_vec_impl<scalar_t>(x, grad_output, alpha);
         });
     return grad;
+}
+
+TORCH_LIBRARY(smoothrelu, m) {
+    m.def("smooth_relu(Tensor x, float alpha=1.0) -> Tensor");
+    m.def("smooth_relu_backward(Tensor x, Tensor grad_output, float alpha=1.0) -> Tensor");
+}
+
+TORCH_LIBRARY_IMPL(smoothrelu, CPU, m) {
+    m.impl("smooth_relu", TORCH_FN(smooth_relu_forward));
+    m.impl("smooth_relu_backward", TORCH_FN(smooth_relu_backward));
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
