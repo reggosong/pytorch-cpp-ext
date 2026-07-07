@@ -4,6 +4,11 @@ A fused SmoothReLU activation implemented as a PyTorch C++ extension with
 explicitly vectorized CPU kernels, dispatcher registration, and a manual
 autograd function validated by `gradcheck`.
 
+**Interactive visualizer**: open [`docs/visualizer.html`](docs/visualizer.html)
+in a browser (from a local clone) — the piecewise math with a live α slider, a
+lane-by-lane walkthrough of the SIMD `blendv` selection, the benchmark numbers,
+and a clickable map of the dispatch/autograd pipeline.
+
 ## Benchmarks
 
 Median latency, float32, measured with `torch.utils.benchmark` (warmup + median

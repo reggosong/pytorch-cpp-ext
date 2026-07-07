@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SmoothReLU Visualizer</title>
+<style>
+  :root {
+    --fg: #1f2328; --muted: #57606a; --bg: #ffffff; --panel: #f6f8fa;
+    --border: #d0d7de; --blue: #0969da; --orange: #bc4c00; --green: #1a7f37;
+    --amber: #9a6700; --red: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: var(--fg); background: var(--bg);
+         font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  nav { position: sticky; top: 0; z-index: 10; background: var(--bg); border-bottom: 1px solid var(--border);
+        padding: 10px 24px; display: flex; gap: 18px; flex-wrap: wrap; align-items: baseline; }
+  nav b { margin-right: 8px; }
+  nav a { color: var(--blue); text-decoration: none; font-size: 14px; }
+  main { max-width: 980px; margin: 0 auto; padding: 12px 24px 80px; }
+  section { margin-top: 44px; }
+  h1 { font-size: 26px; margin: 18px 0 4px; }
+  h2 { font-size: 21px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  canvas { width: 100%; height: auto; display: block; background: #fff;
+           border: 1px solid var(--border); border-radius: 8px; }
+  .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  input[type=range] { width: 260px; }
+  .readout { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--muted); min-height: 1.4em; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+  button { font: inherit; font-size: 14px; padding: 5px 14px; border: 1px solid var(--border);
+           border-radius: 6px; background: #fff; cursor: pointer; }
+  button:hover { background: var(--panel); }
+  button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  table.lanes { border-collapse: collapse; width: 100%; margin-top: 10px; }
+  table.lanes th, table.lanes td { border: 1px solid var(--border); padding: 6px 10px; text-align: center;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; }
+  table.lanes th:first-child, table.lanes td:first-child { text-align: left; font-family: inherit; width: 34%; }
+  tr.pending { opacity: 0.25; }
+  tr.active td { background: #fff8c5; }
+  .stage-desc { min-height: 3.2em; margin-top: 10px; font-size: 14.5px; }
+  .legend span { display: inline-block; margin-right: 16px; font-size: 13.5px; }
+  .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .bars { margin: 12px 0; }
+  .barrow { display: grid; grid-template-columns: 210px 1fr 90px; gap: 10px; align-items: center; margin: 5px 0; font-size: 14px; }
+  .bartrack { background: var(--panel); border-radius: 4px; height: 20px; position: relative; }
+  .barfill { height: 100%; border-radius: 4px; }
+  .barval { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+  .grouplabel { margin: 16px 0 4px; font-weight: 600; font-size: 14px; }
+  .pipe { display: flex; gap: 0; align-items: stretch; flex-wrap: wrap; margin: 14px 0 6px; }
+  .pipenode { border: 1.5px solid var(--border); border-radius: 8px; padding: 8px 12px; background: #fff;
+              cursor: pointer; font-size: 13.5px; text-align: center; flex: 1 1 0; min-width: 120px;
+              overflow-wrap: anywhere; }
+  .pipenode small { display: block; color: var(--muted); font-size: 11.5px; }
+  .pipenode.sel { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(9,105,218,.25); }
+  .arrow { align-self: center; padding: 0 6px; color: var(--muted); }
+  .footnote { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<nav>
+  <b>SmoothReLU Visualizer</b>
+  <a href="#math">The math</a>
+  <a href="#simd">SIMD blendv</a>
+  <a href="#bench">Benchmarks</a>
+  <a href="#pipeline">Pipeline</a>
+</nav>
+<main>
+  <h1>SmoothReLU: a custom C++ PyTorch op, visualized</h1>
+  <p class="sub">Companion to <code>csrc/smooth_relu.cpp</code> and <code>smoothrelu/__init__.py</code>.
+     Everything on this page mirrors the real implementation; benchmark numbers are real measurements.</p>
+
+  <section id="math">
+    <h2>1 · The math</h2>
+    <p>SmoothReLU replaces ReLU's kink at zero with a quadratic ramp of width α.
+       The pieces are chosen so both <b>f</b> and <b>f′</b> are continuous — at <code>x = α</code>
+       the quadratic and linear pieces meet at exactly <code>α/2</code>, with matching slope 1.</p>
+    <div class="row">
+      <label>α = <b id="alphaVal" class="mono">1.00</b></label>
+      <input type="range" id="alpha" min="0.25" max="3" step="0.05" value="1">
+      <span class="legend">
+        <span><span class="swatch" style="background:var(--blue)"></span>f(x)</span>
+        <span><span class="swatch" style="background:var(--orange)"></span>f′(x)</span>
+        <span><span class="swatch" style="background:#eceef0"></span>x ≤ 0 → 0</span>
+        <span><span class="swatch" style="background:#fff3d1"></span>ramp x²/2α</span>
+        <span><span class="swatch" style="background:#dcfce7"></span>linear x−α/2</span>
+      </span>
+    </div>
+    <canvas id="plot" width="1860" height="840"></canvas>
+    <div class="readout" id="plotReadout">hover the plot to read values</div>
+  </section>
+
+  <section id="simd">
+    <h2>2 · SIMD blendv mechanics</h2>
+    <p>The kernel can't branch per element — one <code>Vectorized&lt;float&gt;</code> is 4 NEON lanes
+       processed by single instructions. So it computes <em>both</em> nonzero pieces for all lanes,
+       then selects lane-wise with masks. Step through one loop iteration of
+       <code>smooth_relu_forward_vec_impl</code> (uses the α slider above):</p>
+    <div class="row">
+      <button id="simdPrev">◀ Prev</button>
+      <button id="simdNext" class="primary">Next ▶</button>
+      <button id="simdRand">Randomize input</button>
+      <span class="readout" id="simdStage"></span>
+    </div>
+    <table class="lanes" id="laneTable"></table>
+    <div class="stage-desc panel" id="stageDesc"></div>
+  </section>
+
+  <section id="bench">
+    <h2>3 · Benchmarks (real measurements)</h2>
+    <p class="sub">Apple M3 Pro, 18 GB, macOS · torch 2.8.0 (5 intra-op threads) · Apple clang 17, -O3 ·
+       float32 · median via <code>torch.utils.benchmark</code>. The extension is <b>single-threaded</b>;
+       everything else may use all 5 threads.</p>
+    <div class="row">
+      <button id="passToggle">showing: forward</button>
+      <button id="scaleToggle">scale: log</button>
+    </div>
+    <div id="benchChart" class="bars"></div>
+    <div class="grouplabel">vs PyTorch's native fused activations (forward, n = 10⁸)</div>
+    <div id="nativeChart" class="bars"></div>
+    <p class="footnote">softplus/gelu are transcendental-heavy (exp/log/erf) → compute-bound.
+       relu wins ~2× only because it runs on 5 threads.</p>
+  </section>
+
+  <section id="pipeline">
+    <h2>4 · The full pipeline</h2>
+    <p>Click a stage to see what it does and where it lives.</p>
+    <div class="grouplabel">forward</div>
+    <div class="pipe" id="pipeFwd"></div>
+    <div class="grouplabel">backward</div>
+    <div class="pipe" id="pipeBwd"></div>
+    <div class="stage-desc panel" id="pipeDesc">Click any box above.</div>
+  </section>
+</main>
+
+<script>
+"use strict";
+// ---------- shared math (mirrors csrc/smooth_relu.cpp) ----------
+const f  = (x, a) => x <= 0 ? 0 : (x < a ? x * x / (2 * a) : x - a / 2);
+const df = (x, a) => x <= 0 ? 0 : (x < a ? x / a : 1);
+
+// ---------- section 1: plot ----------
+const plot = document.getElementById("plot"), ctx = plot.getContext("2d");
+const X0 = -3, X1 = 4, Y0 = -0.6, Y1 = 3.6;
+const W = plot.width, H = plot.height, PAD = 40;
+const px = x => PAD + (x - X0) / (X1 - X0) * (W - 2 * PAD);
+const py = y => H - PAD - (y - Y0) / (Y1 - Y0) * (H - 2 * PAD);
+let alpha = 1.0;
+
+function drawPlot() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.save(); ctx.font = "24px -apple-system, sans-serif";
+  // region shading
+  ctx.fillStyle = "#eceef0"; ctx.fillRect(px(X0), 0, px(0) - px(X0), H);
+  ctx.fillStyle = "#fff3d1"; ctx.fillRect(px(0), 0, px(alpha) - px(0), H);
+  ctx.fillStyle = "#dcfce7"; ctx.fillRect(px(alpha), 0, px(X1) - px(alpha), H);
+  // axes + gridline labels
+  ctx.strokeStyle = "#8b949e"; ctx.lineWidth = 2; ctx.beginPath();
+  ctx.moveTo(px(X0), py(0)); ctx.lineTo(px(X1), py(0));
+  ctx.moveTo(px(0), 0); ctx.lineTo(px(0), H); ctx.stroke();
+  ctx.fillStyle = "#57606a";
+  for (let x = Math.ceil(X0); x <= X1; x++) if (x) ctx.fillText(x, px(x) - 7, py(0) + 30);
+  for (let y = 1; y <= 3; y++) ctx.fillText(y, px(0) + 10, py(y) + 8);
+  // curves
+  const curve = (fn, color, dash) => {
+    ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.setLineDash(dash); ctx.beginPath();
+    for (let i = 0; i <= 800; i++) {
+      const x = X0 + (X1 - X0) * i / 800, y = fn(x, alpha);
+      i ? ctx.lineTo(px(x), py(y)) : ctx.moveTo(px(x), py(y));
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  curve(f, "#0969da", []);
+  curve(df, "#bc4c00", [10, 8]);
+  // seam markers: x=0 and x=alpha (both pieces meet at alpha/2)
+  const dot = (x, y, label, dyText) => {
+    ctx.fillStyle = "#cf222e"; ctx.beginPath(); ctx.arc(px(x), py(y), 8, 0, 7); ctx.fill();
+    ctx.fillStyle = "#cf222e"; ctx.fillText(label, px(x) + 12, py(y) + dyText);
+  };
+  dot(0, 0, "seam: f=0, f′=0", -14);
+  dot(alpha, alpha / 2, `seam at α: f = α/2 = ${(alpha / 2).toFixed(2)}, f′=1`, -14);
+  ctx.restore();
+}
+const alphaSlider = document.getElementById("alpha");
+alphaSlider.addEventListener("input", () => {
+  alpha = parseFloat(alphaSlider.value);
+  document.getElementById("alphaVal").textContent = alpha.toFixed(2);
+  drawPlot(); drawLanes();
+});
+plot.addEventListener("mousemove", e => {
+  const r = plot.getBoundingClientRect();
+  const x = X0 + (e.clientX - r.left) / r.width * (X1 - X0);
+  document.getElementById("plotReadout").textContent =
+    `x = ${x.toFixed(3)}   f(x) = ${f(x, alpha).toFixed(4)}   f′(x) = ${df(x, alpha).toFixed(4)}   region: ${x <= 0 ? "zero" : x < alpha ? "quadratic ramp" : "linear"}`;
+});
+
+// ---------- section 2: SIMD stepper ----------
+let lanes = [-1.2, 0.4, 0.9, 2.3], stage = 0;
+const fmt = v => (typeof v === "number" ? v.toFixed(3) : v);
+const STAGES = [
+  ["Vec::loadu(src + i)", "Load 4 contiguous floats into one NEON register. This is why the kernel demands contiguous tensors — it walks raw memory linearly."],
+  ["compute mid and hi for ALL lanes", "mid = x·x / 2α and hi = x − α/2 are computed for every lane, even lanes that will end up zero. Wasted math is cheaper than a branch: SIMD has no per-lane if."],
+  ["comparison masks", "x ≤ 0 and (x > 0 & x < α) produce per-lane bitmasks: all-ones (✓) where true, all-zeros where false. These are data, not control flow."],
+  ["blendv twice", "blendv(hi, mid, mask_mid) picks the ramp value where mask_mid is set, else linear; then blendv(·, 0, mask_lo) forces zero where x ≤ 0. Two selects replace three branches."],
+  ["blended.store(dst + i)", "Write 4 results back with one store. One load + one store per element — the theoretical minimum memory traffic, and the whole reason this beats eager."],
+];
+function laneRows() {
+  const a = alpha;
+  return [
+    ["x (input lanes)",            lanes.map(v => fmt(v)), 0],
+    ["mid = x²/2α",                lanes.map(v => fmt(v * v / (2 * a))), 1],
+    ["hi = x − α/2",               lanes.map(v => fmt(v - a / 2)), 1],
+    ["mask_lo (x ≤ 0)",            lanes.map(v => v <= 0 ? "✓ 0xFFFF" : "0x0000"), 2],
+    ["mask_mid (0 < x < α)",       lanes.map(v => v > 0 && v < a ? "✓ 0xFFFF" : "0x0000"), 2],
+    ["blendv → result",            lanes.map(v => fmt(f(v, a))), 3],
+    ["stored to output",           lanes.map(v => fmt(f(v, a))), 4],
+  ];
+}
+function drawLanes() {
+  const t = document.getElementById("laneTable");
+  t.innerHTML = "<tr><th>register</th><th>lane 0</th><th>lane 1</th><th>lane 2</th><th>lane 3</th></tr>" +
+    laneRows().map(([name, vals, st]) =>
+      `<tr class="${st > stage ? "pending" : st === stage ? "active" : ""}">` +
+      `<td>${name}</td>` + vals.map(v => `<td>${v}</td>`).join("") + "</tr>").join("");
+  document.getElementById("simdStage").textContent = `step ${stage + 1}/5: ${STAGES[stage][0]}`;
+  document.getElementById("stageDesc").textContent = STAGES[stage][1];
+}
+document.getElementById("simdNext").onclick = () => { stage = Math.min(4, stage + 1); drawLanes(); };
+document.getElementById("simdPrev").onclick = () => { stage = Math.max(0, stage - 1); drawLanes(); };
+document.getElementById("simdRand").onclick = () => {
+  lanes = lanes.map(() => +(Math.random() * 5 - 2).toFixed(2)); stage = 0; drawLanes();
+};
+
+// ---------- section 3: benchmarks ----------
+// Real measurements (us). See README + benchmarks/bench.py.
+const BENCH = {
+  forward:  { "10,000": { eager: 28.9, "cpp ext": 5.2,  "torch.compile": 18.8 },
+              "1,000,000": { eager: 1840, "cpp ext": 181.7, "torch.compile": 729.7 },
+              "100,000,000": { eager: 184890, "cpp ext": 17520, "torch.compile": 70950 } },
+  backward: { "10,000": { eager: 34.1, "cpp ext": 12.8, "torch.compile": 29.6 },
+              "1,000,000": { eager: 1550, "cpp ext": 184.7, "torch.compile": 771.3 },
+              "100,000,000": { eager: 252870, "cpp ext": 17700, "torch.compile": 74860 } },
+};
+const NATIVE = { "smooth_relu (ext, 1 thread)": 17700, "torch.relu (5 threads)": 9280,
+                 "F.softplus (5 threads)": 309650, "F.gelu (5 threads)": 196970 };
+const COLORS = { eager: "#8b949e", "cpp ext": "#0969da", "torch.compile": "#bc4c00" };
+let pass = "forward", logScale = true;
+const fmtTime = us => us < 1000 ? `${us.toFixed(1)} µs` : `${(us / 1000).toFixed(2)} ms`;
+function barChart(el, groups) {
+  const all = groups.flatMap(g => Object.values(g.rows));
+  const max = Math.max(...all), min = Math.min(...all);
+  const width = v => logScale
+    ? 6 + 94 * (Math.log10(v / min) / Math.log10(max / min || 10))
+    : Math.max(1.5, 100 * v / max);
+  el.innerHTML = groups.map(g =>
+    (g.label ? `<div class="grouplabel">${g.label}</div>` : "") +
+    Object.entries(g.rows).map(([name, v]) =>
+      `<div class="barrow"><span>${name}</span>` +
+      `<div class="bartrack"><div class="barfill" style="width:${width(v)}%;background:${COLORS[name] || "#1a7f37"}"></div></div>` +
+      `<span class="barval">${fmtTime(v)}</span></div>`).join("")).join("");
+}
+function drawBench() {
+  barChart(document.getElementById("benchChart"),
+    Object.entries(BENCH[pass]).map(([n, rows]) => ({ label: `n = ${n} · ${pass}`, rows })));
+  barChart(document.getElementById("nativeChart"), [{ label: "", rows: NATIVE }]);
+  document.getElementById("passToggle").textContent = `showing: ${pass}`;
+  document.getElementById("scaleToggle").textContent = `scale: ${logScale ? "log" : "linear"}`;
+}
+document.getElementById("passToggle").onclick = () => { pass = pass === "forward" ? "backward" : "forward"; drawBench(); };
+document.getElementById("scaleToggle").onclick = () => { logScale = !logScale; drawBench(); };
+
+// ---------- section 4: pipeline ----------
+const FWD = [
+  ["smooth_relu(x, α)", "smoothrelu/__init__.py:34",
+   "Public API. A plain function wrapping _SmoothReLU.apply so users never touch the Function class directly."],
+  ["_SmoothReLU.apply → forward", "smoothrelu/__init__.py:18",
+   "Inserts a node into the autograd graph. Makes x contiguous, saves it for backward via save_for_backward, stashes α on ctx."],
+  ["torch.ops.smoothrelu.smooth_relu", "registered by TORCH_LIBRARY, csrc/smooth_relu.cpp:178",
+   "The dispatcher call. PyTorch looks up the op schema, computes a dispatch key set from the inputs (CPU float tensor), and routes to the registered CPU kernel. This is what makes the op profiler-visible, scriptable, and extensible (a CUDA kernel would be one more TORCH_LIBRARY_IMPL block)."],
+  ["AT_DISPATCH_FLOATING_TYPES_AND2", "csrc/smooth_relu.cpp:152",
+   "Runtime dtype → compile-time template. A switch on x.scalar_type() that instantiates the kernel for float32/float64/float16/bfloat16."],
+  ["smooth_relu_forward_vec_impl<T>", "csrc/smooth_relu.cpp:28",
+   "The SIMD kernel from section 2: main loop strides by Vec::size() with blendv selection; scalar tail loop finishes the remainder in opmath precision."],
+];
+const BWD = [
+  ["loss.backward()", "autograd engine",
+   "Autograd walks the recorded graph in reverse topological order, carrying grad_output = ∂loss/∂y into each node."],
+  ["_SmoothReLU.backward", "smoothrelu/__init__.py:29",
+   "Receives grad_output, retrieves the saved input, calls the C++ backward op. Returns (grad_x, None, None) — one gradient per forward input; α is a non-differentiable float."],
+  ["torch.ops.smoothrelu.smooth_relu_backward", "csrc/smooth_relu.cpp:183",
+   "Same dispatcher mechanism as forward, routing to the registered CPU backward kernel."],
+  ["smooth_relu_backward_vec_impl<T>", "csrc/smooth_relu.cpp:90",
+   "Fused chain rule: builds f′(x) per lane with masks (0, x/α, or 1) and multiplies by grad_output in the same pass — f′(x) is never materialized as a tensor. Validated by torch.autograd.gradcheck in float64."],
+];
+function pipe(el, nodes, key) {
+  el.innerHTML = nodes.map(([name, loc], i) =>
+    `<div class="pipenode" data-k="${key}${i}">${name}<small>${loc}</small></div>` +
+    (i < nodes.length - 1 ? `<div class="arrow">→</div>` : "")).join("");
+}
+pipe(document.getElementById("pipeFwd"), FWD, "f");
+pipe(document.getElementById("pipeBwd"), BWD, "b");
+document.querySelectorAll(".pipenode").forEach(n => n.onclick = () => {
+  document.querySelectorAll(".pipenode").forEach(m => m.classList.remove("sel"));
+  n.classList.add("sel");
+  const k = n.dataset.k, arr = k[0] === "f" ? FWD : BWD, [name, loc, desc] = arr[+k.slice(1)];
+  document.getElementById("pipeDesc").innerHTML = `<b>${name}</b> <span class="sub mono">(${loc})</span><br>${desc}`;
+});
+
+drawPlot(); drawLanes(); drawBench();
+</script>
+</body>
+</html>
