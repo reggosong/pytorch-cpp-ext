@@ -1,19 +1,19 @@
-import os
 import torch
 from pathlib import Path
 from torch.utils.cpp_extension import load
 
-os.environ.setdefault("PYTORCH_JIT_USE_NINJA", "0")
-
-_THIS_DIR = Path(__file__).resolve().parent
-_BUILD_DIR = _THIS_DIR / ".torch_extensions"
+_ROOT = Path(__file__).resolve().parent.parent
+_BUILD_DIR = _ROOT / ".torch_extensions"
 _BUILD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Build/load extension so dispatcher kernels register when this module imports.
 _ext = load(
     name="smooth_relu_ext",
-    sources=[str(_THIS_DIR / "smooth_relu.cpp")],
+    sources=[str(_ROOT / "csrc" / "smooth_relu.cpp")],
     build_directory=str(_BUILD_DIR),
+    # load() compiles with no optimization flag by default, which cripples
+    # at::vec::Vectorized (un-inlined per-lane calls).
+    extra_cflags=["-O3"],
     verbose=False,
 )
 

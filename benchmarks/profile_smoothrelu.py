@@ -3,7 +3,7 @@ Advanced profiling examples for SmoothReLU C++ extension
 """
 
 import torch
-from smooth_relu import smooth_relu
+from smoothrelu import smooth_relu
 from torch.profiler import profile, record_function, ProfilerActivity
 import torch.utils.benchmark as benchmark
 

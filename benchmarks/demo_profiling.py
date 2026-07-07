@@ -5,11 +5,10 @@ Simple profiling demo for SmoothReLU - runs after compilation
 import torch
 from torch.profiler import profile, record_function, ProfilerActivity
 
-# Import the compiled extension (assumes smooth_relu.py was run first)
 try:
-    from smooth_relu import smooth_relu
+    from smoothrelu import smooth_relu
 except ImportError:
-    print("Please run smooth_relu.py first to compile the extension")
+    print("Run from the repo root so the smoothrelu package is importable")
     exit(1)
 
 def demo_basic_profiling():
